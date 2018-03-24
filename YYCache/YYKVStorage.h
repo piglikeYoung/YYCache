@@ -16,14 +16,44 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  YYKVStorageItem is used by `YYKVStorage` to store key-value pair and meta data.
  Typically, you should not use this class directly.
+ 
+ YYKVStorageItem 用来存储键值对数据及拓展数据，通常不应该直接只用它
  */
 @interface YYKVStorageItem : NSObject
+
+/**
+ 消息key值
+ */
 @property (nonatomic, strong) NSString *key;                ///< key
+
+/**
+ 消息data数据
+ */
 @property (nonatomic, strong) NSData *value;                ///< value
+
+/**
+ 消息文件名
+ */
 @property (nullable, nonatomic, strong) NSString *filename; ///< filename (nil if inline)
+
+/**
+ 消息大小（字节）
+ */
 @property (nonatomic) int size;                             ///< value's size in bytes
+
+/**
+ 消息修改时间
+ */
 @property (nonatomic) int modTime;                          ///< modification unix timestamp
+
+/**
+ 消息导入时间
+ */
 @property (nonatomic) int accessTime;                       ///< last access unix timestamp
+
+/**
+ 拓展数据
+ */
 @property (nullable, nonatomic, strong) NSData *extendedData; ///< extended data (nil if no extended data)
 @end
 
@@ -42,16 +72,29 @@ NS_ASSUME_NONNULL_BEGIN
  * You can use YYKVStorageTypeMixed and choice your storage type for each item.
  
  See <http://www.sqlite.org/intern-v-extern-blob.html> for more information.
+ 
+ 消息存储类型，表示存储“YYKVStorageItem.value”的位置。
+ 
+ 一般而言,数据存入sqlite比写文件更快，但读取数据的性能依赖数据大小 以iPhone 6 64G为例
+ 数据超过20KB，则从文件读取数据比sqlite读取更快
+ 存储较小的数据使用 YYKVStorageTypeSQLite 获得更好的性能
+ 如果存储较大的数据 如图片数据, 使用 YYKVStorageTypeFile 获取更好的性能
+ 使用 LSMessageDiskStorageTypeMixed 将针对每一个item采用不同的存储方式
+ 详见 http://www.sqlite.org/intern-v-extern-blob.html
+ 
  */
 typedef NS_ENUM(NSUInteger, YYKVStorageType) {
     
     /// The `value` is stored as a file in file system.
+    /// 消息存入文件
     YYKVStorageTypeFile = 0,
     
     /// The `value` is stored in sqlite with blob type.
+    /// 消息存入sqlite，采用blob的类型
     YYKVStorageTypeSQLite = 1,
     
     /// The `value` is stored in file system or sqlite based on your choice.
+    /// 根据选择选取存入方式
     YYKVStorageTypeMixed = 2,
 };
 
@@ -72,6 +115,11 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  that there's only one thread to access the instance at the same time. If you really 
  need to process large amounts of data in multi-thread, you should split the data
  to multiple KVStorage instance (sharding).
+ 
+ 消息写入file/sqlite的管理类
+ @discussion 键值对的方式将消息存入文件和sqlite 使用`initWithPath:type:`进行初始化
+ 初始化后 不要再对生成的path进行读写操作 使用最新的sqlite版本获取2-4倍的速度提升
+ 产生的实例并不是线程安全的，应该在同一时间在同一的线程使用，数据较大时，应该对数据进行拆分成多个片段进行存储
  */
 @interface YYKVStorage : NSObject
 
@@ -80,11 +128,22 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
 /// @name Attribute
 ///=============================================================================
 
+/**
+ 消息存入的路径
+ */
 @property (nonatomic, readonly) NSString *path;        ///< The path of this storage.
+
+/**
+ 消息存储类型
+ */
 @property (nonatomic, readonly) YYKVStorageType type;  ///< The type of this storage.
+
+/**
+ 是否打印log
+ */
 @property (nonatomic) BOOL errorLogsEnabled;           ///< Set `YES` to enable error logs for debug.
 
-#pragma mark - Initializer
+#pragma mark - 初始化
 ///=============================================================================
 /// @name Initializer
 ///=============================================================================
@@ -101,11 +160,17 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
     type of the specified path.
  @return  A new storage object, or nil if an error occurs.
  @warning Multiple instances with the same path will make the storage unstable.
+ 
+ 推荐的实例化方法
+ path  写数据的路径. 如果路径存在，则会在此路径读写数据 否则建立一个新路径
+ type  存储类型  一旦设置后不要修改
+ 返回一个存储管理实例, 发生错误返回nil
+ 多个实例操作同一个路径 会导致错误
  */
 - (nullable instancetype)initWithPath:(NSString *)path type:(YYKVStorageType)type NS_DESIGNATED_INITIALIZER;
 
 
-#pragma mark - Save Items
+#pragma mark - 保存消息
 ///=============================================================================
 /// @name Save Items
 ///=============================================================================
@@ -124,6 +189,13 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  
  @param item  An item.
  @return Whether succeed.
+ 
+ 保存item key值存在时更新item
+ @discussion 此方法会将 item.key, item.value, item.filename 和
+ item.extendedData 写入文件或sqlite, 其他属性会忽略. item.key
+ 和 item.value 不应该为空 (nil || length == 0).
+ item  消息item
+ 返回是否成功
  */
 - (BOOL)saveItem:(YYKVStorageItem *)item;
 
@@ -136,6 +208,12 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  @param key   The key, should not be empty (nil or zero length).
  @param value The key, should not be empty (nil or zero length).
  @return Whether succeed.
+ 
+ 保存item key值存在时更新item
+ 此方法会保存键值对到 sqlite. 如果存储类型为 YYKVStorageTypeFile , 此方法会失败
+ key   key值不能为空
+ value value不能为空
+ 返回是否成功
  */
 - (BOOL)saveItemWithKey:(NSString *)key value:(NSData *)value;
 
@@ -154,13 +232,24 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  @param extendedData  The extended data for this item (pass nil to ignore it).
  
  @return Whether succeed.
+ 
+ 
+ 保存item key值存在时更新item
+ 如果写入类型为LSMessageDiskStorageTypeFile,filename 不能为空
+ 如果写入类型为LSMessageDiskStorageTypeSQLite, filename 会被忽略
+ 如果写入类型为LSMessageDiskStorageTypeMixed, 如果filename不为空 则value会被存入文件 否则存入sqlite
+ key           key值不能为空
+ value         value不能为空
+ filename      文件名
+ extendedData  item的拓展数据 如果是nil则忽略
+ Whether succeed.
  */
 - (BOOL)saveItemWithKey:(NSString *)key
                   value:(NSData *)value
                filename:(nullable NSString *)filename
            extendedData:(nullable NSData *)extendedData;
 
-#pragma mark - Remove Items
+#pragma mark - 删除消息
 ///=============================================================================
 /// @name Remove Items
 ///=============================================================================
@@ -170,6 +259,10 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  
  @param key The item's key.
  @return Whether succeed.
+ 
+ 根据key值删除item
+ keys 特定的key值
+ 返回是否删除成功
  */
 - (BOOL)removeItemForKey:(NSString *)key;
 
@@ -179,6 +272,10 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  @param keys An array of specified keys.
  
  @return Whether succeed.
+ 
+ 根据keys数组删除items
+ keys keys数组
+ 返回是否删除成功
  */
 - (BOOL)removeItemForKeys:(NSArray<NSString *> *)keys;
 
@@ -187,6 +284,10 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  
  @param size  The maximum size in bytes.
  @return Whether succeed.
+ 
+ 根据消息value的开销限制删除items
+ size 消息value的最大限制
+ 返回是否删除成功
  */
 - (BOOL)removeItemsLargerThanSize:(int)size;
 
@@ -195,6 +296,10 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  
  @param time  The specified unix timestamp.
  @return Whether succeed.
+ 
+ 删除比指定时间更早存入的消息
+ time  指定的时间
+ 返回是否删除成功
  */
 - (BOOL)removeItemsEarlierThanTime:(int)time;
 
@@ -204,6 +309,10 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  
  @param maxSize The specified size in bytes.
  @return Whether succeed.
+ 
+ 根据消息开销限制删除items (LRU对象优先删除)
+ maxCount 最大的消息开销
+ 返回是否删除成功
  */
 - (BOOL)removeItemsToFitSize:(int)maxSize;
 
@@ -213,6 +322,10 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  
  @param maxCount The specified item count.
  @return Whether succeed.
+ 
+ 根据消息数量限制删除items (LRU对象优先删除)
+ maxCount 最大的消息数量
+ 返回是否删除成功
  */
 - (BOOL)removeItemsToFitCount:(int)maxCount;
 
@@ -224,6 +337,11 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  faster than `removeAllItemsWithProgressBlock:endBlock:`.
  
  @return Whether succeed.
+ 
+ 在后台队列中，删除所有的item
+ @discussion 此方法会删除 files 和 sqlite database 进入回收站 并在后台清除回收站数据
+ 比`removeAllItemsWithProgressBlock:endBlock:`方法更快
+ @return 返回是否删除成功
  */
 - (BOOL)removeAllItems;
 
@@ -233,12 +351,17 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  @warning You should not send message to this instance in these blocks.
  @param progress This block will be invoked during removing, pass nil to ignore.
  @param end      This block will be invoked at the end, pass nil to ignore.
+ 
+ 删除所有的item
+ @warning 在block中不要对该实例发送消息
+ progress 删除时执行的block，nil则不执行
+ end      删除结束执行的block，nil则不执行
  */
 - (void)removeAllItemsWithProgressBlock:(nullable void(^)(int removedCount, int totalCount))progress
                                endBlock:(nullable void(^)(BOOL error))end;
 
 
-#pragma mark - Get Items
+#pragma mark - 获取消息
 ///=============================================================================
 /// @name Get Items
 ///=============================================================================
@@ -248,6 +371,10 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  
  @param key A specified key.
  @return Item for the key, or nil if not exists / error occurs.
+ 
+ 根据key获取item
+ key  特定的key值
+ 返回item, 发送错误返回nil
  */
 - (nullable YYKVStorageItem *)getItemForKey:(NSString *)key;
 
@@ -257,6 +384,10 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  
  @param key A specified key.
  @return Item information for the key, or nil if not exists / error occurs.
+ 
+ 根据key获取item的信息（value会被忽略）
+ key  特定的key值
+ 返回item的信息, 发送错误返回nil
  */
 - (nullable YYKVStorageItem *)getItemInfoForKey:(NSString *)key;
 
@@ -265,6 +396,10 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  
  @param key  A specified key.
  @return Item's value, or nil if not exists / error occurs.
+ 
+ 根据key获取item的value
+ key  特定的key值
+ 返回item的value, 发送错误返回nil
  */
 - (nullable NSData *)getItemValueForKey:(NSString *)key;
 
@@ -273,6 +408,10 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  
  @param keys  An array of specified keys.
  @return An array of `YYKVStorageItem`, or nil if not exists / error occurs.
+ 
+ 根据key的数组获取item的信息
+ keys  key值的数组
+ 包含`YYKVStorageItem`的数组 发生错误返回nil
  */
 - (nullable NSArray<YYKVStorageItem *> *)getItemForKeys:(NSArray<NSString *> *)keys;
 
@@ -282,6 +421,10 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  
  @param keys  An array of specified keys.
  @return An array of `YYKVStorageItem`, or nil if not exists / error occurs.
+ 
+ 根据key的数组获取item的信息（value会被忽略）
+ keys  key值的数组
+ 包含`LSMessageDiskStorageItem`的数组 发生错误返回nil
  */
 - (nullable NSArray<YYKVStorageItem *> *)getItemInfoForKeys:(NSArray<NSString *> *)keys;
 
@@ -291,10 +434,14 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  @param keys  An array of specified keys.
  @return A dictionary which key is 'key' and value is 'value', or nil if not 
     exists / error occurs.
+ 
+ 根据一个key值数组获取item和key的字典
+ keys  key值的数组
+ 返回一个字典 key->item对应 发生错误返回nil
  */
 - (nullable NSDictionary<NSString *, NSData *> *)getItemValueForKeys:(NSArray<NSString *> *)keys;
 
-#pragma mark - Get Storage Status
+#pragma mark - 获取存储属性
 ///=============================================================================
 /// @name Get Storage Status
 ///=============================================================================
@@ -305,18 +452,28 @@ typedef NS_ENUM(NSUInteger, YYKVStorageType) {
  @param key  A specified key.
  
  @return `YES` if there's an item exists for the key, `NO` if not exists or an error occurs.
+ 
+ 根据key值查找item是否存在
+ key  特定的key
+ 返回item是否存在
  */
 - (BOOL)itemExistsForKey:(NSString *)key;
 
 /**
  Get total item count.
  @return Total item count, -1 when an error occurs.
+ 
+ 获取item的总数
+ 返回总数，如果发生错误返回-1
  */
 - (int)getItemsCount;
 
 /**
  Get item value's total size in bytes.
  @return Total size in bytes, -1 when an error occurs.
+ 
+ 获取items的总大小（字节）
+ 返回总大小，如果发生错误返回-1
  */
 - (int)getItemsSize;
 
