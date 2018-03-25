@@ -19,15 +19,23 @@
 #import "sqlite3.h"
 #endif
 
-
-static const NSUInteger kMaxErrorRetryCount = 8;
-static const NSTimeInterval kMinRetryTimeInterval = 2.0;
-static const int kPathLengthMax = PATH_MAX - 64;
-static NSString *const kDBFileName = @"manifest.sqlite";
-static NSString *const kDBShmFileName = @"manifest.sqlite-shm";
-static NSString *const kDBWalFileName = @"manifest.sqlite-wal";
-static NSString *const kDataDirectoryName = @"data";
-static NSString *const kTrashDirectoryName = @"trash";
+/*
+ sqlite-shm 和 sqlite-wal 是 SQLite 在3.7.0版本引入的，是数据库中用于实现原子事务的一种机制。
+ sqlite-shm 是日志索引文件
+ sqlite-wal 是日志文件
+ 
+ 详情参考：
+ https://www.cnblogs.com/frydsh/archive/2013/04/13/3018666.html
+ https://www.cnblogs.com/cchust/p/4754619.html
+ */
+static const NSUInteger kMaxErrorRetryCount = 8;                /// 最大错误重试次数
+static const NSTimeInterval kMinRetryTimeInterval = 2.0;        /// 最小的重试间隔
+static const int kPathLengthMax = PATH_MAX - 64;                /// 路径的最大长度
+static NSString *const kDBFileName = @"manifest.sqlite";        /// db文件名
+static NSString *const kDBShmFileName = @"manifest.sqlite-shm"; /// Shm文件名
+static NSString *const kDBWalFileName = @"manifest.sqlite-wal"; /// wal文件名
+static NSString *const kDataDirectoryName = @"data";            /// 数据路径名
+static NSString *const kTrashDirectoryName = @"trash";          /// 回收站路径名
 
 
 /*
@@ -57,6 +65,7 @@ static NSString *const kTrashDirectoryName = @"trash";
  */
 
 /// Returns nil in App Extension.
+/// 返回Application 如果是App Extension返回nil
 static UIApplication *_YYSharedApplication() {
     static BOOL isAppExtension = NO;
     static dispatch_once_t onceToken;
@@ -92,6 +101,9 @@ static UIApplication *_YYSharedApplication() {
 
 #pragma mark - db
 
+/**
+ 打开db
+ */
 - (BOOL)_dbOpen {
     if (_db) return YES;
     
@@ -117,6 +129,9 @@ static UIApplication *_YYSharedApplication() {
     }
 }
 
+/**
+ 关闭db
+ */
 - (BOOL)_dbClose {
     if (!_db) return YES;
     
@@ -149,6 +164,9 @@ static UIApplication *_YYSharedApplication() {
     return YES;
 }
 
+/**
+ db检测
+ */
 - (BOOL)_dbCheck {
     if (!_db) {
         if (_dbOpenErrorCount < kMaxErrorRetryCount &&
@@ -161,17 +179,28 @@ static UIApplication *_YYSharedApplication() {
     return YES;
 }
 
+/**
+ db初始化
+ 开启 SQLite 的 WAL 模式
+ */
 - (BOOL)_dbInitialize {
     NSString *sql = @"pragma journal_mode = wal; pragma synchronous = normal; create table if not exists manifest (key text, filename text, size integer, inline_data blob, modification_time integer, last_access_time integer, extended_data blob, primary key(key)); create index if not exists last_access_time_idx on manifest(last_access_time);";
     return [self _dbExecute:sql];
 }
 
+/**
+ 同步WAL文件和数据库文件的行为被称为checkpoint（检查点）
+ 执行checkpoint之后，将sqlite-wal合并到sqlite，WAL文件会被清空
+ */
 - (void)_dbCheckpoint {
     if (![self _dbCheck]) return;
     // Cause a checkpoint to occur, merge `sqlite-wal` file to `sqlite` file.
     sqlite3_wal_checkpoint(_db, NULL);
 }
 
+/**
+ db执行sql语句
+ */
 - (BOOL)_dbExecute:(NSString *)sql {
     if (sql.length == 0) return NO;
     if (![self _dbCheck]) return NO;
@@ -186,6 +215,9 @@ static UIApplication *_YYSharedApplication() {
     return result == SQLITE_OK;
 }
 
+/**
+ db设置sqlite3_stmt
+ */
 - (sqlite3_stmt *)_dbPrepareStmt:(NSString *)sql {
     if (![self _dbCheck] || sql.length == 0 || !_dbStmtCache) return NULL;
     sqlite3_stmt *stmt = (sqlite3_stmt *)CFDictionaryGetValue(_dbStmtCache, (__bridge const void *)(sql));
@@ -202,6 +234,9 @@ static UIApplication *_YYSharedApplication() {
     return stmt;
 }
 
+/**
+ db合并key值
+ */
 - (NSString *)_dbJoinedKeys:(NSArray *)keys {
     NSMutableString *string = [NSMutableString new];
     for (NSUInteger i = 0,max = keys.count; i < max; i++) {
@@ -213,6 +248,9 @@ static UIApplication *_YYSharedApplication() {
     return string;
 }
 
+/**
+ db Bind 合并的key值数组到stmt
+ */
 - (void)_dbBindJoinedKeys:(NSArray *)keys stmt:(sqlite3_stmt *)stmt fromIndex:(int)index{
     for (int i = 0, max = (int)keys.count; i < max; i++) {
         NSString *key = keys[i];
@@ -220,6 +258,9 @@ static UIApplication *_YYSharedApplication() {
     }
 }
 
+/**
+ db 保存键值对key->value
+ */
 - (BOOL)_dbSaveWithKey:(NSString *)key value:(NSData *)value fileName:(NSString *)fileName extendedData:(NSData *)extendedData {
     NSString *sql = @"insert or replace into manifest (key, filename, size, inline_data, modification_time, last_access_time, extended_data) values (?1, ?2, ?3, ?4, ?5, ?6, ?7);";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -246,6 +287,9 @@ static UIApplication *_YYSharedApplication() {
     return YES;
 }
 
+/**
+ db更新操作时间
+ */
 - (BOOL)_dbUpdateAccessTimeWithKey:(NSString *)key {
     NSString *sql = @"update manifest set last_access_time = ?1 where key = ?2;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -260,6 +304,9 @@ static UIApplication *_YYSharedApplication() {
     return YES;
 }
 
+/**
+ db根据keys数组更新一组操作时间
+ */
 - (BOOL)_dbUpdateAccessTimeWithKeys:(NSArray *)keys {
     if (![self _dbCheck]) return NO;
     int t = (int)time(NULL);
@@ -282,6 +329,9 @@ static UIApplication *_YYSharedApplication() {
     return YES;
 }
 
+/**
+ db根据key删除item
+ */
 - (BOOL)_dbDeleteItemWithKey:(NSString *)key {
     NSString *sql = @"delete from manifest where key = ?1;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -296,6 +346,9 @@ static UIApplication *_YYSharedApplication() {
     return YES;
 }
 
+/**
+ db根据keys数组删除items
+ */
 - (BOOL)_dbDeleteItemWithKeys:(NSArray *)keys {
     if (![self _dbCheck]) return NO;
     NSString *sql =  [NSString stringWithFormat:@"delete from manifest where key in (%@);", [self _dbJoinedKeys:keys]];
@@ -316,6 +369,9 @@ static UIApplication *_YYSharedApplication() {
     return YES;
 }
 
+/**
+ db根据是否超过size删除item
+ */
 - (BOOL)_dbDeleteItemsWithSizeLargerThan:(int)size {
     NSString *sql = @"delete from manifest where size > ?1;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -329,6 +385,9 @@ static UIApplication *_YYSharedApplication() {
     return YES;
 }
 
+/**
+ db根据是否在指定time之前删除item
+ */
 - (BOOL)_dbDeleteItemsWithTimeEarlierThan:(int)time {
     NSString *sql = @"delete from manifest where last_access_time < ?1;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -342,6 +401,9 @@ static UIApplication *_YYSharedApplication() {
     return YES;
 }
 
+/**
+ db根据stmt获取指定的item和拓展数据
+ */
 - (YYKVStorageItem *)_dbGetItemFromStmt:(sqlite3_stmt *)stmt excludeInlineData:(BOOL)excludeInlineData {
     int i = 0;
     char *key = (char *)sqlite3_column_text(stmt, i++);
@@ -365,6 +427,9 @@ static UIApplication *_YYSharedApplication() {
     return item;
 }
 
+/**
+ db根据key获取指定的item和拓展数据
+ */
 - (YYKVStorageItem *)_dbGetItemWithKey:(NSString *)key excludeInlineData:(BOOL)excludeInlineData {
     NSString *sql = excludeInlineData ? @"select key, filename, size, modification_time, last_access_time, extended_data from manifest where key = ?1;" : @"select key, filename, size, inline_data, modification_time, last_access_time, extended_data from manifest where key = ?1;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -383,6 +448,9 @@ static UIApplication *_YYSharedApplication() {
     return item;
 }
 
+/**
+ db根据keys数组获取指定的item数组和拓展数据
+ */
 - (NSMutableArray *)_dbGetItemWithKeys:(NSArray *)keys excludeInlineData:(BOOL)excludeInlineData {
     if (![self _dbCheck]) return nil;
     NSString *sql;
@@ -418,6 +486,9 @@ static UIApplication *_YYSharedApplication() {
     return items;
 }
 
+/**
+ db根据key获取指定的item的value数据
+ */
 - (NSData *)_dbGetValueWithKey:(NSString *)key {
     NSString *sql = @"select inline_data from manifest where key = ?1;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -438,6 +509,9 @@ static UIApplication *_YYSharedApplication() {
     }
 }
 
+/**
+ db根据key获取指定的文件名
+ */
 - (NSString *)_dbGetFilenameWithKey:(NSString *)key {
     NSString *sql = @"select filename from manifest where key = ?1;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -457,6 +531,9 @@ static UIApplication *_YYSharedApplication() {
     return nil;
 }
 
+/**
+ db根据keys数组获取指定的文件名数组
+ */
 - (NSMutableArray *)_dbGetFilenameWithKeys:(NSArray *)keys {
     if (![self _dbCheck]) return nil;
     NSString *sql = [NSString stringWithFormat:@"select filename from manifest where key in (%@);", [self _dbJoinedKeys:keys]];
@@ -489,6 +566,9 @@ static UIApplication *_YYSharedApplication() {
     return filenames;
 }
 
+/**
+ db根据是否超过size获取指定的文件名数组
+ */
 - (NSMutableArray *)_dbGetFilenamesWithSizeLargerThan:(int)size {
     NSString *sql = @"select filename from manifest where size > ?1 and filename is not null;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -515,6 +595,9 @@ static UIApplication *_YYSharedApplication() {
     return filenames;
 }
 
+/**
+ db根据是否早于操作时间time获取指定的文件名数组
+ */
 - (NSMutableArray *)_dbGetFilenamesWithTimeEarlierThan:(int)time {
     NSString *sql = @"select filename from manifest where last_access_time < ?1 and filename is not null;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -541,6 +624,9 @@ static UIApplication *_YYSharedApplication() {
     return filenames;
 }
 
+/**
+ db根据时间顺序获取指定数量的item尺寸信息
+ */
 - (NSMutableArray *)_dbGetItemSizeInfoOrderByTimeAscWithLimit:(int)count {
     NSString *sql = @"select key, filename, size from manifest order by last_access_time asc limit ?1;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -573,6 +659,9 @@ static UIApplication *_YYSharedApplication() {
     return items;
 }
 
+/**
+ db根据指定的key获取item的数量
+ */
 - (int)_dbGetItemCountWithKey:(NSString *)key {
     NSString *sql = @"select count(key) from manifest where key = ?1;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -586,6 +675,9 @@ static UIApplication *_YYSharedApplication() {
     return sqlite3_column_int(stmt, 0);
 }
 
+/**
+ db获取item的总大小
+ */
 - (int)_dbGetTotalItemSize {
     NSString *sql = @"select sum(size) from manifest;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -598,6 +690,9 @@ static UIApplication *_YYSharedApplication() {
     return sqlite3_column_int(stmt, 0);
 }
 
+/**
+ db获取item的总数量
+ */
 - (int)_dbGetTotalItemCount {
     NSString *sql = @"select count(*) from manifest;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -611,24 +706,36 @@ static UIApplication *_YYSharedApplication() {
 }
 
 
-#pragma mark - file
+#pragma mark - file文件读写
 
+/**
+ 根据文件名和文件数据写文件
+ */
 - (BOOL)_fileWriteWithName:(NSString *)filename data:(NSData *)data {
     NSString *path = [_dataPath stringByAppendingPathComponent:filename];
     return [data writeToFile:path atomically:NO];
 }
 
+/**
+ 根据文件名读取文件数据
+ */
 - (NSData *)_fileReadWithName:(NSString *)filename {
     NSString *path = [_dataPath stringByAppendingPathComponent:filename];
     NSData *data = [NSData dataWithContentsOfFile:path];
     return data;
 }
 
+/**
+ 根据文件名删除文件
+ */
 - (BOOL)_fileDeleteWithName:(NSString *)filename {
     NSString *path = [_dataPath stringByAppendingPathComponent:filename];
     return [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
 }
 
+/**
+ 文件移至回收站
+ */
 - (BOOL)_fileMoveAllToTrash {
     CFUUIDRef uuidRef = CFUUIDCreate(NULL);
     CFStringRef uuid = CFUUIDCreateString(NULL, uuidRef);
@@ -642,6 +749,9 @@ static UIApplication *_YYSharedApplication() {
     return suc;
 }
 
+/**
+ 在后台清空回收站数据
+ */
 - (void)_fileEmptyTrashInBackground {
     NSString *trashPath = _trashPath;
     dispatch_queue_t queue = _trashQueue;
@@ -661,6 +771,8 @@ static UIApplication *_YYSharedApplication() {
 /**
  Delete all files and empty in background.
  Make sure the db is closed.
+ 
+ 删除所有的文件并在后台清空 确保db为关闭状态
  */
 - (void)_reset {
     [[NSFileManager defaultManager] removeItemAtPath:[_path stringByAppendingPathComponent:kDBFileName] error:nil];
@@ -726,6 +838,9 @@ static UIApplication *_YYSharedApplication() {
     return self;
 }
 
+/**
+ 销毁时关闭db
+ */
 - (void)dealloc {
     UIBackgroundTaskIdentifier taskID = [_YYSharedApplication() beginBackgroundTaskWithExpirationHandler:^{}];
     [self _dbClose];
@@ -734,14 +849,25 @@ static UIApplication *_YYSharedApplication() {
     }
 }
 
+#pragma mark - 保存消息
+
+/**
+ 保存item key值存在时更新item
+ */
 - (BOOL)saveItem:(YYKVStorageItem *)item {
     return [self saveItemWithKey:item.key value:item.value filename:item.filename extendedData:item.extendedData];
 }
 
+/**
+ 保存item key值存在时更新item
+ */
 - (BOOL)saveItemWithKey:(NSString *)key value:(NSData *)value {
     return [self saveItemWithKey:key value:value filename:nil extendedData:nil];
 }
 
+/**
+ 保存item key值存在时更新item
+ */
 - (BOOL)saveItemWithKey:(NSString *)key value:(NSData *)value filename:(NSString *)filename extendedData:(NSData *)extendedData {
     if (key.length == 0 || value.length == 0) return NO;
     if (_type == YYKVStorageTypeFile && filename.length == 0) {
@@ -768,6 +894,11 @@ static UIApplication *_YYSharedApplication() {
     }
 }
 
+#pragma mark - 删除消息
+
+/**
+ 根据key值删除item
+ */
 - (BOOL)removeItemForKey:(NSString *)key {
     if (key.length == 0) return NO;
     switch (_type) {
@@ -786,6 +917,9 @@ static UIApplication *_YYSharedApplication() {
     }
 }
 
+/**
+ 根据keys数组删除items
+ */
 - (BOOL)removeItemForKeys:(NSArray *)keys {
     if (keys.count == 0) return NO;
     switch (_type) {
@@ -804,6 +938,9 @@ static UIApplication *_YYSharedApplication() {
     }
 }
 
+/**
+ 根据消息value的开销限制删除items
+ */
 - (BOOL)removeItemsLargerThanSize:(int)size {
     if (size == INT_MAX) return YES;
     if (size <= 0) return [self removeAllItems];
@@ -830,6 +967,9 @@ static UIApplication *_YYSharedApplication() {
     return NO;
 }
 
+/**
+ 删除比指定时间更早存入的消息
+ */
 - (BOOL)removeItemsEarlierThanTime:(int)time {
     if (time <= 0) return YES;
     if (time == INT_MAX) return [self removeAllItems];
@@ -856,6 +996,9 @@ static UIApplication *_YYSharedApplication() {
     return NO;
 }
 
+/**
+ 根据消息开销限制删除items (LRU对象优先删除)
+ */
 - (BOOL)removeItemsToFitSize:(int)maxSize {
     if (maxSize == INT_MAX) return YES;
     if (maxSize <= 0) return [self removeAllItems];
@@ -886,6 +1029,9 @@ static UIApplication *_YYSharedApplication() {
     return suc;
 }
 
+/**
+ 根据消息数量限制删除items (LRU对象优先删除)
+ */
 - (BOOL)removeItemsToFitCount:(int)maxCount {
     if (maxCount == INT_MAX) return YES;
     if (maxCount <= 0) return [self removeAllItems];
