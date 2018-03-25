@@ -16,12 +16,24 @@
 #import <objc/runtime.h>
 #import <time.h>
 
+
+/**
+ 线程信号（锁）
+ */
 #define Lock() dispatch_semaphore_wait(self->_lock, DISPATCH_TIME_FOREVER)
+
+/**
+ 线程信号（解锁）
+ */
 #define Unlock() dispatch_semaphore_signal(self->_lock)
 
+/**
+ 存取拓展数据的key
+ */
 static const int extended_data_key;
 
 /// Free disk space in bytes.
+/// 获取disk的空闲容量
 static int64_t _YYDiskSpaceFree() {
     NSError *error = nil;
     NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfFileSystemForPath:NSHomeDirectory() error:&error];
@@ -32,6 +44,7 @@ static int64_t _YYDiskSpaceFree() {
 }
 
 /// String's md5 hash.
+/// 获取字符串MD5值
 static NSString *_YYNSStringMD5(NSString *string) {
     if (!string) return nil;
     NSData *data = [string dataUsingEncoding:NSUTF8StringEncoding];
@@ -47,9 +60,17 @@ static NSString *_YYNSStringMD5(NSString *string) {
 }
 
 /// weak reference for all instances
+/**
+ Map表保存cache实例
+ */
 static NSMapTable *_globalInstances;
+/**
+ 线程信号
+ */
 static dispatch_semaphore_t _globalInstancesLock;
-
+/**
+ 静态变量实例化
+ */
 static void _YYDiskCacheInitGlobal() {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -58,6 +79,9 @@ static void _YYDiskCacheInitGlobal() {
     });
 }
 
+/**
+ 获取 NSMapTable 中的 YYDiskCache 实例
+ */
 static YYDiskCache *_YYDiskCacheGetGlobal(NSString *path) {
     if (path.length == 0) return nil;
     _YYDiskCacheInitGlobal();
@@ -67,6 +91,9 @@ static YYDiskCache *_YYDiskCacheGetGlobal(NSString *path) {
     return cache;
 }
 
+/**
+ 设置 NSMapTable 中的 YYDiskCache 实例，key 值为 cache 路径
+ */
 static void _YYDiskCacheSetGlobal(YYDiskCache *cache) {
     if (cache.path.length == 0) return;
     _YYDiskCacheInitGlobal();
@@ -83,6 +110,9 @@ static void _YYDiskCacheSetGlobal(YYDiskCache *cache) {
     dispatch_queue_t _queue;
 }
 
+/**
+ 定时清除LRU对象
+ */
 - (void)_trimRecursively {
     __weak typeof(self) _self = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(_autoTrimInterval * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
@@ -93,6 +123,9 @@ static void _YYDiskCacheSetGlobal(YYDiskCache *cache) {
     });
 }
 
+/**
+ 后台清除LRU对象
+ */
 - (void)_trimInBackground {
     __weak typeof(self) _self = self;
     dispatch_async(_queue, ^{
@@ -107,17 +140,26 @@ static void _YYDiskCacheSetGlobal(YYDiskCache *cache) {
     });
 }
 
+/**
+ 按照总开销清除LRU对象
+ */
 - (void)_trimToCost:(NSUInteger)costLimit {
     if (costLimit >= INT_MAX) return;
     [_kv removeItemsToFitSize:(int)costLimit];
     
 }
 
+/**
+ 按照总数量限制清除LRU对象
+ */
 - (void)_trimToCount:(NSUInteger)countLimit {
     if (countLimit >= INT_MAX) return;
     [_kv removeItemsToFitCount:(int)countLimit];
 }
 
+/**
+ 按照时间限制清除LRU对象
+ */
 - (void)_trimToAge:(NSTimeInterval)ageLimit {
     if (ageLimit <= 0) {
         [_kv removeAllItems];
@@ -130,6 +172,9 @@ static void _YYDiskCacheSetGlobal(YYDiskCache *cache) {
     [_kv removeItemsEarlierThanTime:(int)age];
 }
 
+/**
+ 按照空闲容量限制清除LRU对象
+ */
 - (void)_trimToFreeDiskSpace:(NSUInteger)targetFreeDiskSpace {
     if (targetFreeDiskSpace == 0) return;
     int64_t totalBytes = [_kv getItemsSize];
@@ -143,6 +188,9 @@ static void _YYDiskCacheSetGlobal(YYDiskCache *cache) {
     [self _trimToCost:(int)costLimit];
 }
 
+/**
+ 通过key获取文件名
+ */
 - (NSString *)_filenameForKey:(NSString *)key {
     NSString *filename = nil;
     if (_customFileNameBlock) filename = _customFileNameBlock(key);
@@ -150,6 +198,10 @@ static void _YYDiskCacheSetGlobal(YYDiskCache *cache) {
     return filename;
 }
 
+#pragma mark - 监听
+/**
+ 监听app将要终止
+ */
 - (void)_appWillBeTerminated {
     Lock();
     _kv = nil;
@@ -167,6 +219,9 @@ static void _YYDiskCacheSetGlobal(YYDiskCache *cache) {
     return [self initWithPath:@"" inlineThreshold:0];
 }
 
+/**
+ 根据path实例化磁盘cache对象
+ */
 - (instancetype)initWithPath:(NSString *)path {
     return [self initWithPath:path inlineThreshold:1024 * 20]; // 20KB
 }
