@@ -15,7 +15,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <pthread.h>
 
-
+/// 获取release线程
 static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
     return dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0);
 }
@@ -23,15 +23,16 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
 /**
  A node in linked map.
  Typically, you should not use this class directly.
+ 链表节点 node
  */
 @interface _YYLinkedMapNode : NSObject {
     @package
-    __unsafe_unretained _YYLinkedMapNode *_prev; // retained by dic
-    __unsafe_unretained _YYLinkedMapNode *_next; // retained by dic
-    id _key;
-    id _value;
-    NSUInteger _cost;
-    NSTimeInterval _time;
+    __unsafe_unretained _YYLinkedMapNode *_prev; // retained by dic 前一个消息 && 被字典保留
+    __unsafe_unretained _YYLinkedMapNode *_next; // retained by dic 后一个消息 && 被字典保留
+    id _key;    /// 消息的key
+    id _value;  /// 消息
+    NSUInteger _cost;   /// 消息开销
+    NSTimeInterval _time;   /// 消息时间
 }
 @end
 
@@ -44,40 +45,54 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
  It's not thread-safe and does not validate the parameters.
  
  Typically, you should not use this class directly.
+ 
+ 非线程安全 && 未验证全部参数
  */
 @interface _YYLinkedMap : NSObject {
     @package
-    CFMutableDictionaryRef _dic; // do not set object directly
-    NSUInteger _totalCost;
-    NSUInteger _totalCount;
-    _YYLinkedMapNode *_head; // MRU, do not change it directly
-    _YYLinkedMapNode *_tail; // LRU, do not change it directly
-    BOOL _releaseOnMainThread;
-    BOOL _releaseAsynchronously;
+    CFMutableDictionaryRef _dic; // do not set object directly 保存消息的字典，外部不要直接设置
+    NSUInteger _totalCost;  // 消息总开销
+    NSUInteger _totalCount; // 消息总量
+    _YYLinkedMapNode *_head; // MRU, do not change it directly MRU最近最常使用, 外部不要直接修改
+    _YYLinkedMapNode *_tail; // LRU, do not change it directly LRU最近最少使用, 外部不要直接修改
+    BOOL _releaseOnMainThread;  // 是否在主线程release
+    BOOL _releaseAsynchronously;    // 是否异步release
 }
 
 /// Insert a node at head and update the total cost.
 /// Node and node.key should not be nil.
+/// 在头部插入一个节点node
+/// node 节点 && node的key不能为nil
 - (void)insertNodeAtHead:(_YYLinkedMapNode *)node;
 
 /// Bring a inner node to header.
 /// Node should already inside the dic.
+/// 将字典中的节点移至头部
+/// node 节点应该已经在字典中
 - (void)bringNodeToHead:(_YYLinkedMapNode *)node;
 
 /// Remove a inner node and update the total cost.
 /// Node should already inside the dic.
+/// 删除字典中的一个节点 更新总开销
+/// node 节点应该已经在字典中
 - (void)removeNode:(_YYLinkedMapNode *)node;
 
 /// Remove tail node if exist.
+/// 删除尾部的节点
+/// 返回删除的节点
 - (_YYLinkedMapNode *)removeTailNode;
 
 /// Remove all node in background queue.
+/// 在后台线程删除所有的节点
 - (void)removeAll;
 
 @end
 
 @implementation _YYLinkedMap
 
+/**
+ 默认异步在后台线程release
+ */
 - (instancetype)init {
     self = [super init];
     _dic = CFDictionaryCreateMutable(CFAllocatorGetDefault(), 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
@@ -174,10 +189,13 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
 
 @implementation YYMemoryCache {
     pthread_mutex_t _lock;
-    _YYLinkedMap *_lru;
+    _YYLinkedMap *_lru;     /// 礼物消息存储的map
     dispatch_queue_t _queue;
 }
 
+/**
+ 消息池子递归清扫
+ */
 - (void)_trimRecursively {
     __weak typeof(self) _self = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(_autoTrimInterval * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
@@ -188,6 +206,9 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
     });
 }
 
+/**
+ 消息池子在后台清扫
+ */
 - (void)_trimInBackground {
     dispatch_async(_queue, ^{
         [self _trimToCost:self->_costLimit];
@@ -196,6 +217,9 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
     });
 }
 
+/**
+ 消息池子在后台清扫
+ */
 - (void)_trimToCost:(NSUInteger)costLimit {
     BOOL finish = NO;
     pthread_mutex_lock(&_lock);
@@ -230,6 +254,9 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
     }
 }
 
+/**
+ 消息池子按照数量限制清扫
+ */
 - (void)_trimToCount:(NSUInteger)countLimit {
     BOOL finish = NO;
     pthread_mutex_lock(&_lock);
@@ -264,6 +291,9 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
     }
 }
 
+/**
+ 消息池子按照时间限制清扫
+ */
 - (void)_trimToAge:(NSTimeInterval)ageLimit {
     BOOL finish = NO;
     NSTimeInterval now = CACurrentMediaTime();
@@ -321,7 +351,7 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
 
 - (instancetype)init {
     self = super.init;
-    pthread_mutex_init(&_lock, NULL);
+    pthread_mutex_init(&_lock, NULL);   /// 初始化 pthread_mutex_t
     _lru = [_YYLinkedMap new];
     _queue = dispatch_queue_create("com.ibireme.cache.memory", DISPATCH_QUEUE_SERIAL);
     
