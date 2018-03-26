@@ -74,7 +74,9 @@ static dispatch_semaphore_t _globalInstancesLock;
 static void _YYDiskCacheInitGlobal() {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
+        // 初始化信号量
         _globalInstancesLock = dispatch_semaphore_create(1);
+        // 创建 NSMapTable
         _globalInstances = [[NSMapTable alloc] initWithKeyOptions:NSPointerFunctionsStrongMemory valueOptions:NSPointerFunctionsWeakMemory capacity:0];
     });
 }
@@ -86,6 +88,7 @@ static YYDiskCache *_YYDiskCacheGetGlobal(NSString *path) {
     if (path.length == 0) return nil;
     _YYDiskCacheInitGlobal();
     dispatch_semaphore_wait(_globalInstancesLock, DISPATCH_TIME_FOREVER);
+    // 通过 NSMapTable 获取 YYDiskCache
     id cache = [_globalInstances objectForKey:path];
     dispatch_semaphore_signal(_globalInstancesLock);
     return cache;
@@ -98,6 +101,7 @@ static void _YYDiskCacheSetGlobal(YYDiskCache *cache) {
     if (cache.path.length == 0) return;
     _YYDiskCacheInitGlobal();
     dispatch_semaphore_wait(_globalInstancesLock, DISPATCH_TIME_FOREVER);
+    // 通过 NSMapTable 设置 YYDiskCache
     [_globalInstances setObject:cache forKey:cache.path];
     dispatch_semaphore_signal(_globalInstancesLock);
 }
@@ -119,6 +123,7 @@ static void _YYDiskCacheSetGlobal(YYDiskCache *cache) {
         __strong typeof(_self) self = _self;
         if (!self) return;
         [self _trimInBackground];
+        // 定时清除递归调用
         [self _trimRecursively];
     });
 }
@@ -257,7 +262,9 @@ static void _YYDiskCacheSetGlobal(YYDiskCache *cache) {
     _freeDiskSpaceLimit = 0;
     _autoTrimInterval = 60;
     
+    // 开启递归定时清扫
     [self _trimRecursively];
+    // 设置 YYDiskCache
     _YYDiskCacheSetGlobal(self);
     
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_appWillBeTerminated) name:UIApplicationWillTerminateNotification object:nil];
@@ -301,6 +308,7 @@ static void _YYDiskCacheSetGlobal(YYDiskCache *cache) {
         }
     }
     if (object && item.extendedData) {
+        // 设置额外数据，通过 objc_setAssociatedObject 动态绑定
         [YYDiskCache setExtendedData:item.extendedData toObject:object];
     }
     return object;
@@ -338,6 +346,7 @@ static void _YYDiskCacheSetGlobal(YYDiskCache *cache) {
     if (!value) return;
     NSString *filename = nil;
     if (_kv.type != YYKVStorageTypeSQLite) {
+        // 如果超过数据库写入大小限制，生成文件名
         if (value.length > _inlineThreshold) {
             filename = [self _filenameForKey:key];
         }

@@ -36,6 +36,10 @@ NS_ASSUME_NONNULL_BEGIN
  It use `YYMemoryCache` to store objects in a small and fast memory cache,
  and use `YYDiskCache` to persisting objects to a large and slow disk cache.
  See `YYMemoryCache` and `YYDiskCache` for more information.
+ 
+ YYCache 是线程安全的缓存
+ `YYMemoryCache` 是一个小型并且快速的内存缓存
+ `YYDiskCache` 是将对象持久保存到大而缓慢的磁盘缓存
  */
 @interface YYCache : NSObject
 

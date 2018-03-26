@@ -72,6 +72,7 @@ static UIApplication *_YYSharedApplication() {
     dispatch_once(&onceToken, ^{
         Class cls = NSClassFromString(@"UIApplication");
         if(!cls || ![cls respondsToSelector:@selector(sharedApplication)]) isAppExtension = YES;
+        // 非 App Extension ，比如 Today Extension等等会创建 .appex
         if ([[[NSBundle mainBundle] bundlePath] hasSuffix:@".appex"]) isAppExtension = YES;
     });
 #pragma clang diagnostic push
@@ -220,13 +221,17 @@ static UIApplication *_YYSharedApplication() {
  */
 - (sqlite3_stmt *)_dbPrepareStmt:(NSString *)sql {
     if (![self _dbCheck] || sql.length == 0 || !_dbStmtCache) return NULL;
+    // 先尝试从 _dbStmtCache 根据入参 sql 取出已缓存 sqlite3_stmt
     sqlite3_stmt *stmt = (sqlite3_stmt *)CFDictionaryGetValue(_dbStmtCache, (__bridge const void *)(sql));
     if (!stmt) {
+        // 如果没有缓存再从新生成一个 sqlite3_stmt
         int result = sqlite3_prepare_v2(_db, sql.UTF8String, -1, &stmt, NULL);
+        // 生成结果异常则根据错误日志开启标识打印日志
         if (result != SQLITE_OK) {
             if (_errorLogsEnabled) NSLog(@"%s line:%d sqlite stmt prepare error (%d): %s", __FUNCTION__, __LINE__, result, sqlite3_errmsg(_db));
             return NULL;
         }
+        // 生成成功则放入 _dbStmtCache 缓存
         CFDictionarySetValue(_dbStmtCache, (__bridge const void *)(sql), stmt);
     } else {
         sqlite3_reset(stmt);
@@ -269,10 +274,13 @@ static UIApplication *_YYSharedApplication() {
     int timestamp = (int)time(NULL);
     sqlite3_bind_text(stmt, 1, key.UTF8String, -1, NULL);
     sqlite3_bind_text(stmt, 2, fileName.UTF8String, -1, NULL);
+    // 存储Value长度
     sqlite3_bind_int(stmt, 3, (int)value.length);
     if (fileName.length == 0) {
+        // 如果没有文件名，说明是存到数据库，存储字节文本
         sqlite3_bind_blob(stmt, 4, value.bytes, (int)value.length, 0);
     } else {
+        // 如果有文件名，存空，获取文件根据 fileName 获取
         sqlite3_bind_blob(stmt, 4, NULL, 0, 0);
     }
     sqlite3_bind_int(stmt, 5, timestamp);
@@ -842,8 +850,10 @@ static UIApplication *_YYSharedApplication() {
  销毁时关闭db
  */
 - (void)dealloc {
+    // 销毁时，application 开启一个后台处理任务，等待 DB close
     UIBackgroundTaskIdentifier taskID = [_YYSharedApplication() beginBackgroundTaskWithExpirationHandler:^{}];
     [self _dbClose];
+    // DB 关闭完成后，结束后台任务
     if (taskID != UIBackgroundTaskInvalid) {
         [_YYSharedApplication() endBackgroundTask:taskID];
     }
@@ -869,16 +879,21 @@ static UIApplication *_YYSharedApplication() {
  保存item key值存在时更新item
  */
 - (BOOL)saveItemWithKey:(NSString *)key value:(NSData *)value filename:(NSString *)filename extendedData:(NSData *)extendedData {
+    // 没有 Key，也没有 Value 直接返回 NO
     if (key.length == 0 || value.length == 0) return NO;
+    // 存文件，但是没有文件名，也直接返回 NO
     if (_type == YYKVStorageTypeFile && filename.length == 0) {
         return NO;
     }
     
     if (filename.length) {
+        // 写文件失败，返回 NO
         if (![self _fileWriteWithName:filename data:value]) {
             return NO;
         }
+        // 将文件名写入数据库，之后方便根据 Key 去查找文件
         if (![self _dbSaveWithKey:key value:value fileName:filename extendedData:extendedData]) {
+            // 如果写入数据库失败，把之前写入的文件删除
             [self _fileDeleteWithName:filename];
             return NO;
         }
